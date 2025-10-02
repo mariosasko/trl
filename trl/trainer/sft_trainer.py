@@ -718,11 +718,6 @@ class SFTTrainer(BaseTrainer):
         # BFD packing requires padding-free mode; otherwise, the collator outputs padded attention masks, causing
         # FlashAttention to ignore position_ids and recompute them incorrectly from the padded attention mask.
         self.padding_free = args.padding_free or (args.packing and args.packing_strategy == "bfd")
-        use_flash_attention = model.config._attn_implementation in [
-            "flash_attention_2",
-            "flash_attention_3",
-            "kernels-community/vllm-flash-attn3",
-        ]
         if self.padding_free:
             if data_collator is not None:
                 raise ValueError("Passing a custom data collator is not supported when using padding-free.")
@@ -730,15 +725,6 @@ class SFTTrainer(BaseTrainer):
                 logger.warning(
                     "You are passing `padding_free=True` with the 'wrapped' packing strategy, which is not "
                     "recommended. Please refer to the documentation to understand why this is not recommended."
-                )
-            if not use_flash_attention:
-                logger.warning(
-                    "Padding-free training is enabled, but the attention implementation is not set to "
-                    "'flash_attention_2'. Padding-free training flattens batches into a single sequence, and "
-                    "'flash_attention_2' is the only known attention mechanism that reliably supports this. Using "
-                    "other implementations may lead to unexpected behavior. To ensure compatibility, set "
-                    "`attn_implementation='flash_attention_2'` in the model configuration, or verify that your "
-                    "attention mechanism can handle flattened sequences."
                 )
             if args.per_device_train_batch_size == 1 and not args.packing:
                 logger.warning(
@@ -777,8 +763,7 @@ class SFTTrainer(BaseTrainer):
                 pad_token_id=pad_token_id,
                 completion_only_loss=self.completion_only_loss,
                 padding_free=self.padding_free,
-                # Using position_ids without flash_attn hurts the training
-                return_position_ids=use_flash_attention,
+                return_position_ids=True,
                 pad_to_multiple_of=args.pad_to_multiple_of,
             )
         elif data_collator is None and self._is_vision_dataset:
@@ -788,16 +773,6 @@ class SFTTrainer(BaseTrainer):
                 completion_only_loss=self.completion_only_loss,
                 pad_to_multiple_of=args.pad_to_multiple_of,
                 dataset_text_field=args.dataset_text_field,
-            )
-
-        if args.packing and args.packing_strategy == "bfd" and not use_flash_attention:
-            logger.warning(
-                "You are using packing, but the attention implementation is not set to 'flash_attention_2' or "
-                "'kernels-community/vllm-flash-attn3'. Packing flattens batches into a single sequence, and Flash "
-                "Attention is the only known attention mechanisms that reliably support this. Using other "
-                "implementations may lead to cross-contamination between batches. To avoid this, either disable "
-                "packing by setting `packing=False`, or set `attn_implementation='flash_attention_2'` or "
-                "`attn_implementation='kernels-community/vllm-flash-attn3'` in the model configuration."
             )
         if args.assistant_only_loss and not is_conversational(dataset_sample):
             raise ValueError(
